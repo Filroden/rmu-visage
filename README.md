@@ -31,8 +31,8 @@ You can then apply, stack, and remove these property overrides instantly via a s
 
 Visage works by taking a "snapshot" of your token's true base form. You can then apply Visages on top of it in two ways:
 
-- **Identities:** Replaces the core token completely. Perfect for Wild Shape, Polymorph, disguises, illusions or alternate outfits or poses.
-- **Overlays:** Stacks effects *on top* of the current token. Perfect for adding a sneak effect, status conditions, magical auras, or flying animations.
+- **Identities:** This places the Visage underneath the stack of Overlay Visages, making it ideal for establishing a new Identity. Perfect for Wild Shape, Polymorph, disguises, illusions or alternate outfits or poses.
+- **Overlays:** Layers the Visage on top of the active Identity (or base token) where it can combine with other Overlay Visages. Perfect for adding a sneak effect, status conditions, magical auras, or flying animations.
 
 Because Visage is non-destructive, you can stack as many overlays as you want. When the spell ends or the disguise is dropped, simply click "Revert," and your token instantly returns to its original state.
 
@@ -53,7 +53,7 @@ While other modules focus on transient animations (a sword swinging or a firebal
   - **Game Events:** React to Scene Darkness, Global Illumination, elevation changes, Region entry/exit, Combat states or even the token being targeted.
 - **Integrated Media Pipeline:** Visage seamlessly hooks into the **[Sequencer](https://foundryvtt.com/packages/sequencer)** and **[Token Magic FX](https://foundryvtt.com/packages/tokenmagic)** modules. Bind images, particle animations, looping sound effects, and WebGL shaders to your Visages with pinpoint cardinal alignment, offsets, and colour tinting. When the Visage is removed, the audio, visuals, and filters clean themselves up automatically.
 - **Dynamic Token Ring Support:** Fully supports Foundry's Dynamic Token Rings. Override subject textures, background colours, and toggle ring effects (Pulse, Wave, Invisibility) on the fly.
-- **Global & Local Libraries:** GMs can build a "Global Library" of universal effects to use across the world. Set some of these Visages to "public" and they become visible for players to use. Players have a "Local Library" tied to their specific character sheet for their personal transformations.
+- **Global & Local Libraries:** GMs can build a "Global Library" of universal effects to use across the world. Set some of these Visages to "public" and they become visible for players to use. Players have a "Local Library" tied to their specific character sheet for their personal transformations. GMs can create local Visages for players and set them to "locked" (cannot be edited by the player) or "hidden" (cannot be seen by the player unless applied by the GM to their token).
 - **Quick Visages:** Define a default image folder in your game settings to unlock the **Quick Visage** feature. The Selector HUD will automatically display any images from that folder (and its sub-folders) that match the token's name, allowing you to create a new Identity from a selected image and apply it immediately.
 
 ### The Interface
