@@ -72,32 +72,58 @@ export class VisageData {
     }
 
     /**
-     * Retrieves all local visages stored on a specific Actor.
+     * Retrieves all local visages stored on a specific Actor as an ID-keyed dictionary.
+     * Includes a lazy-evaluation fallback for unmigrated legacy arrays.
      * @param {Actor} actor - The actor document.
-     * @returns {Array} Sorted list of local visages (alphabetical by label).
+     * @returns {Object} Dictionary of local visages.
      */
-    static getLocal(actor) {
-        if (!actor) return [];
+    static getLocalDictionary(actor) {
+        if (!actor) return {};
         const sourceData = actor.flags?.[DATA_NAMESPACE]?.[this.ALTERNATE_FLAG_KEY] || {};
-        const results = [];
 
+        // Lazy-evaluation fallback for straggler arrays (e.g., imported compendium actors)
+        if (Array.isArray(sourceData)) {
+            return sourceData.reduce((acc, data) => {
+                if (!data) return acc;
+                const id = data.id || foundry.utils.randomID(16);
+                try {
+                    const model = new VisageDataModel({ ...data, id });
+                    acc[id] = model.toObject();
+                } catch (err) {
+                    console.warn(`Visage | Could not parse lazy-eval local Visage '${id}' for ${actor.name}.`, err);
+                }
+                return acc;
+            }, {});
+        }
+
+        const results = {};
         for (const [key, data] of Object.entries(sourceData)) {
             if (!data) continue;
 
-            // Handle legacy data structure where ID might not be in the body
+            // Handle legacy objects where ID might not be in the body
             const id = key.length === 16 ? key : data.id || foundry.utils.randomID(16);
 
             if (data.changes) {
                 try {
-                    // Let the DataModel automatically sanitise, apply defaults, and map the object
-                    const model = new VisageDataModel({ ...data, id: id });
-                    results.push(model.toObject());
+                    const model = new VisageDataModel({ ...data, id });
+                    results[id] = model.toObject();
                 } catch (err) {
-                    console.warn(`Visage | Could not parse legacy local Visage '${id}' for ${actor.name}. It may be corrupted.`, err);
+                    console.warn(`Visage | Could not parse local Visage '${id}' for ${actor.name}. It may be corrupted.`, err);
                 }
             }
         }
-        return results.sort((a, b) => a.label.localeCompare(b.label));
+        return results;
+    }
+
+    /**
+     * Retrieves all local visages stored on a specific Actor.
+     * Preserves legacy Array return format for UI component compatibility.
+     * @param {Actor} actor - The actor document.
+     * @returns {Array} Sorted list of local visages (alphabetical by label).
+     */
+    static getLocal(actor) {
+        const dictionary = this.getLocalDictionary(actor);
+        return Object.values(dictionary).sort((a, b) => a.label.localeCompare(b.label));
     }
 
     // ==========================================
@@ -126,19 +152,26 @@ export class VisageData {
         if (!actor && !game.user.isGM) return;
 
         if (actor) {
-            // 1. Fetch clean array
-            const visages = this.getLocal(actor);
+            const currentFlag = actor.getFlag(DATA_NAMESPACE, this.ALTERNATE_FLAG_KEY);
 
-            // 2. Target the item
-            const target = visages.find((v) => v.id === id);
-            if (target) target.deleted = true;
+            // Defensive Guard: Fallback to full-array write if unmigrated
+            if (Array.isArray(currentFlag)) {
+                console.warn(`Visage | Actor ${actor.name} contains unmigrated arrays. Falling back to legacy delete.`);
+                const visages = this.getLocal(actor);
+                const target = visages.find((v) => v.id === id);
+                if (target) target.deleted = true;
 
-            // 3. Write back strictly as an Array
-            await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}`]: visages });
+                await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}`]: visages });
+                Hooks.callAll("visageDataChanged");
+                return;
+            }
 
+            // V5.10+ Targeted Dictionary Write
+            await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}.${id}.deleted`]: true });
             Hooks.callAll("visageDataChanged");
             return;
         }
+
         return this.updateGlobal(id, { deleted: true, deletedAt: Date.now() });
     }
 
@@ -149,15 +182,26 @@ export class VisageData {
      */
     static async restore(id, actor = null) {
         if (actor) {
-            const visages = this.getLocal(actor);
-            const target = visages.find((v) => v.id === id);
+            const currentFlag = actor.getFlag(DATA_NAMESPACE, this.ALTERNATE_FLAG_KEY);
 
-            if (target) target.deleted = false;
+            // Defensive Guard: Fallback to full-array write if unmigrated
+            if (Array.isArray(currentFlag)) {
+                console.warn(`Visage | Actor ${actor.name} contains unmigrated arrays. Falling back to legacy restore.`);
+                const visages = this.getLocal(actor);
+                const target = visages.find((v) => v.id === id);
+                if (target) target.deleted = false;
 
-            await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}`]: visages });
+                await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}`]: visages });
+                Hooks.callAll("visageDataChanged");
+                return;
+            }
+
+            // V5.10+ Targeted Dictionary Write
+            await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}.${id}.deleted`]: false });
             Hooks.callAll("visageDataChanged");
             return;
         }
+
         return this.updateGlobal(id, { deleted: false, deletedAt: null });
     }
 
@@ -168,13 +212,25 @@ export class VisageData {
      */
     static async destroy(id, actor = null) {
         if (actor) {
-            const visages = this.getLocal(actor);
-            const updatedVisages = visages.filter((v) => v.id !== id);
+            const currentFlag = actor.getFlag(DATA_NAMESPACE, this.ALTERNATE_FLAG_KEY);
 
-            await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}`]: updatedVisages });
+            // Defensive Guard: Fallback to full-array write if unmigrated
+            if (Array.isArray(currentFlag)) {
+                console.warn(`Visage | Actor ${actor.name} contains unmigrated arrays. Falling back to legacy destroy.`);
+                const visages = this.getLocal(actor);
+                const updatedVisages = visages.filter((v) => v.id !== id);
+
+                await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}`]: updatedVisages });
+                Hooks.callAll("visageDataChanged");
+                return;
+            }
+
+            // V5.10+ Targeted Dictionary Write using native key-deletion syntax
+            await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}.-=${id}`]: null });
             Hooks.callAll("visageDataChanged");
             return;
         }
+
         const all = this._getRawGlobal();
         if (all[id]) {
             delete all[id];
@@ -245,31 +301,39 @@ export class VisageData {
     /** @private */
     static async _saveLocal(data, actor) {
         const id = data.id || foundry.utils.randomID(16);
-
         const purifiedData = this._validateDataModel(data, id);
         const entry = {
             ...purifiedData,
             updated: Date.now(),
         };
 
-        // 1. Fetch clean array
-        const visages = this.getLocal(actor);
-        const existingIndex = visages.findIndex((v) => v.id === id);
-        const existing = existingIndex > -1 ? visages[existingIndex] : null;
+        const currentFlag = actor.getFlag(DATA_NAMESPACE, this.ALTERNATE_FLAG_KEY) || {};
+        let existing = null;
 
-        // 2. Inject or Update
-        if (existing) {
-            visages[existingIndex] = entry;
+        // Defensive Guard: Fallback to full-array write if unmigrated
+        if (Array.isArray(currentFlag)) {
+            console.warn(`Visage | Actor ${actor.name} contains unmigrated arrays. Falling back to legacy save.`);
+            const visages = this.getLocal(actor);
+            const existingIndex = visages.findIndex((v) => v.id === id);
+
+            if (existingIndex > -1) {
+                existing = visages[existingIndex];
+                visages[existingIndex] = entry;
+            } else {
+                visages.push(entry);
+            }
+
+            await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}`]: visages });
         } else {
-            visages.push(entry);
+            // V5.10+ Targeted Dictionary Write
+            existing = currentFlag[id];
+            await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}.${id}`]: entry });
         }
 
-        // 3. Write back strictly as an Array
-        await actor.update({ [`flags.${DATA_NAMESPACE}.${this.ALTERNATE_FLAG_KEY}`]: visages });
         console.log(`Visage | Saved Local Visage for ${actor.name}: ${entry.label}`);
-
         Hooks.callAll("visageDataChanged");
 
+        // Clean the Canvas if automation was disabled
         if (existing?.automation?.enabled && !data.automation?.enabled) {
             const VisageApi = game.modules.get(MODULE_ID)?.api;
             if (VisageApi) {

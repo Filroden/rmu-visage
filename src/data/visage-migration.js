@@ -25,66 +25,95 @@ export async function migrateWorldData() {
 
     // Step 3: Run v5.3 Migration (Anchor Default Scrubbing)
     await _migrateV5_3(DATA_NAMESPACE);
+
+    // Step 4: Run v5.10.0 Migration (Array to Dictionary)
+    await _migrateV5_10(DATA_NAMESPACE);
+}
+
+/**
+ * Executes the v5.10.0 Schema Migration.
+ * Converts local Visage storage arrays into ID-keyed dictionaries.
+ * @param {string} namespace - The data namespace.
+ * @private
+ */
+async function _migrateV5_10(namespace) {
+    let updates = 0;
+    const targetActors = _getMigrationTargetActors();
+
+    for (const actor of targetActors) {
+        updates += await _convertActorVisageArrayToDictionary(actor, namespace);
+    }
+
+    if (updates > 0) {
+        console.log(`Visage | v5.10.0 Migration Complete: Converted arrays to dictionaries for ${updates} actor(s).`);
+    }
+}
+
+/**
+ * Retrieves all linked and unlinked actors in the world.
+ * @returns {Array<Actor>} Array of actor documents.
+ * @private
+ */
+function _getMigrationTargetActors() {
+    const linkedActors = game.actors.contents;
+    const unlinkedActors = game.scenes.contents.flatMap((scene) => scene.tokens.filter((token) => !token.actorLink && token.actor).map((token) => token.actor));
+    return [...linkedActors, ...unlinkedActors];
+}
+
+/**
+ * Converts a single actor's legacy Visage array into a dictionary.
+ * @param {Actor} actor - The target actor.
+ * @param {string} namespace - The data namespace.
+ * @returns {Promise<number>} 1 if updated, 0 if skipped or failed.
+ * @private
+ */
+async function _convertActorVisageArrayToDictionary(actor, namespace) {
+    const rawVisages = foundry.utils.getProperty(actor, `flags.${namespace}.alternateVisages`);
+    if (!Array.isArray(rawVisages)) return 0;
+
+    const dictionary = _reduceVisageArrayToDictionary(rawVisages, actor.name);
+
+    try {
+        await actor.update({ [`flags.${namespace}.alternateVisages`]: dictionary });
+        return 1;
+    } catch (err) {
+        console.error(`Visage | Failed to migrate actor ${actor.name}:`, err);
+        return 0;
+    }
+}
+
+/**
+ * Reduces a raw array of Visage data into a validated ID-keyed dictionary.
+ * Passes data through the DataModel as a free repair pass.
+ * @param {Array} rawVisages - The legacy array of visages.
+ * @param {string} actorName - The name of the actor for logging.
+ * @returns {Object} The validated dictionary.
+ * @private
+ */
+function _reduceVisageArrayToDictionary(rawVisages, actorName) {
+    return rawVisages.reduce((acc, data) => {
+        if (!data) return acc;
+        try {
+            const model = new VisageDataModel(data);
+            const cleanData = model.toObject();
+            acc[cleanData.id] = cleanData;
+        } catch (err) {
+            console.warn(`Visage | Migration skipped corrupted visage on actor ${actorName}:`, err);
+        }
+        return acc;
+    }, {});
 }
 
 /**
  * Executes the v5.3 Schema Migration.
  * Scrubs accidental `0.5` default anchors from Visages so they correctly inherit underlying shifts.
  * Applies universally to both identities and overlays.
+ * @param {string} namespace - The data namespace.
  * @private
  */
 async function _migrateV5_3(namespace) {
-    let globalUpdates = 0;
-    let actorUpdates = 0;
-
-    // 1. Scrub Global Visages
-    const globalLibrary = game.settings.get("visage", "globalVisages") || {};
-    let globalsChanged = false;
-
-    for (const entry of Object.values(globalLibrary)) {
-        if (entry.changes?.texture) {
-            if (entry.changes.texture.anchorX === 0.5) {
-                entry.changes.texture.anchorX = null;
-                globalsChanged = true;
-            }
-            if (entry.changes.texture.anchorY === 0.5) {
-                entry.changes.texture.anchorY = null;
-                globalsChanged = true;
-            }
-        }
-    }
-    if (globalsChanged) {
-        await game.settings.set("visage", "globalVisages", globalLibrary);
-        globalUpdates++;
-    }
-
-    // 2. Scrub Local Actor Visages
-    for (const actor of game.actors) {
-        const rawLocals = actor.getFlag(namespace, "alternateVisages") || [];
-
-        // Safety Catch: Foundry VTT often mutates Array flags into Objects with integer keys.
-        const locals = Array.isArray(rawLocals) ? rawLocals : Object.values(rawLocals);
-        let localsChanged = false;
-
-        const updatedLocals = locals.map((v) => {
-            if (v?.changes?.texture) {
-                if (v.changes.texture.anchorX === 0.5) {
-                    v.changes.texture.anchorX = null;
-                    localsChanged = true;
-                }
-                if (v.changes.texture.anchorY === 0.5) {
-                    v.changes.texture.anchorY = null;
-                    localsChanged = true;
-                }
-            }
-            return v;
-        });
-
-        if (localsChanged) {
-            await actor.setFlag(namespace, "alternateVisages", updatedLocals);
-            actorUpdates++;
-        }
-    }
+    const globalUpdates = await _migrateV5_3Global();
+    const actorUpdates = await _migrateV5_3Local(namespace);
 
     if (globalUpdates > 0 || actorUpdates > 0) {
         console.log(`Visage | v5.3 Migration Complete: Scrubbed default anchors from ${globalUpdates} Global(s) and ${actorUpdates} Actor(s).`);
@@ -92,31 +121,113 @@ async function _migrateV5_3(namespace) {
 }
 
 /**
- * Executes the v3.0 Schema Migration.
- * Ensures all Visages and Masks have a 'mode' property.
- * * **Logic:**
- * - Local Visages (Actors) -> Default to 'identity' (preserves classic Visage behavior).
- * - Global Masks (Settings) -> Default to 'overlay' (preserves classic Mask behavior).
- * @param {string} DATA_NAMESPACE - The data namespace.
+ * Scrubs default anchors from the global library.
  * @private
  */
-async function _migrateV3(DATA_NAMESPACE) {
+async function _migrateV5_3Global() {
+    const globals = game.settings.get(MODULE_ID, VisageData.SETTING_KEY) || {};
+    let updates = 0;
+    let hasChanges = false;
+
+    for (const entry of Object.values(globals)) {
+        if (_scrubVisageAnchors(entry)) {
+            hasChanges = true;
+            updates++;
+        }
+    }
+
+    if (hasChanges) {
+        await game.settings.set(MODULE_ID, VisageData.SETTING_KEY, globals);
+    }
+
+    return updates;
+}
+
+/**
+ * Scrubs default anchors from local actor visages, preserving the existing data structure (Array or Object).
+ * @param {string} namespace - The data namespace.
+ * @private
+ */
+async function _migrateV5_3Local(namespace) {
+    let actorUpdates = 0;
+
+    for (const actor of game.actors) {
+        const rawLocals = actor.getFlag(namespace, "alternateVisages");
+        if (!rawLocals) continue;
+
+        let hasChanges = false;
+        const items = Array.isArray(rawLocals) ? rawLocals : Object.values(rawLocals);
+
+        for (const entry of items) {
+            if (_scrubVisageAnchors(entry)) hasChanges = true;
+        }
+
+        if (hasChanges) {
+            // Write back in the exact format it was received to prevent schema regression
+            await actor.setFlag(namespace, "alternateVisages", rawLocals);
+            actorUpdates++;
+        }
+    }
+
+    return actorUpdates;
+}
+
+/**
+ * Checks and mutates a single visage entry to remove explicit 0.5 anchors.
+ * @param {Object} entry - The visage data object.
+ * @returns {boolean} True if the entry was modified.
+ * @private
+ */
+function _scrubVisageAnchors(entry) {
+    let changed = false;
+    if (!entry?.changes?.texture) return false;
+
+    if (entry.changes.texture.anchorX === 0.5) {
+        entry.changes.texture.anchorX = null;
+        changed = true;
+    }
+
+    if (entry.changes.texture.anchorY === 0.5) {
+        entry.changes.texture.anchorY = null;
+        changed = true;
+    }
+
+    return changed;
+}
+
+/**
+ * Executes the v3.0 Schema Migration.
+ * Leverages the DataModel to automatically enforce the 'mode' property.
+ * @param {string} namespace - The data namespace.
+ * @private
+ */
+async function _migrateV3(namespace) {
     ui.notifications.info("Visage: Verifying Data Schema (v3.0)...");
     console.groupCollapsed("Visage | Schema Migration v3.0");
 
-    // 1. Migrate Local Visages (Flags on Actors)
-    let actorsMigrated = 0;
-    for (const actor of game.actors) {
-        const flagData = actor.flags[DATA_NAMESPACE] || {};
-        const alternates = flagData.alternateVisages || {};
+    const actorsMigrated = await _migrateV3Local(namespace);
+    const globalsMigrated = await _migrateV3Global();
 
-        let updates = {};
+    console.log(`Migration Complete. Actors: ${actorsMigrated}, Globals: ${globalsMigrated}`);
+    console.groupEnd();
+}
+
+/**
+ * Migrates local actor visages through the universal cleaner.
+ * @private
+ */
+async function _migrateV3Local(namespace) {
+    let migratedCount = 0;
+
+    for (const actor of game.actors) {
+        const alternates = actor.flags[namespace]?.alternateVisages || {};
         let hasUpdates = false;
+        const updates = {};
 
         for (const [key, data] of Object.entries(alternates)) {
-            // If missing 'mode', default to 'identity' (classic Visage behavior)
-            if (!data.mode) {
-                updates[`flags.${DATA_NAMESPACE}.alternateVisages.${key}.mode`] = "identity";
+            const cleaned = cleanVisageData(data);
+            if (JSON.stringify(cleaned) !== JSON.stringify(data)) {
+                updates[`flags.${namespace}.alternateVisages.${key}`] = cleaned;
                 hasUpdates = true;
             }
         }
@@ -124,43 +235,46 @@ async function _migrateV3(DATA_NAMESPACE) {
         if (hasUpdates) {
             try {
                 await actor.update(updates);
-                actorsMigrated++;
+                migratedCount++;
                 console.log(`Migrated Actor: ${actor.name}`);
             } catch (err) {
                 console.warn(`Failed to migrate actor ${actor.name}:`, err);
             }
         }
     }
+    return migratedCount;
+}
 
-    // 2. Migrate Global Library (World Settings)
+/**
+ * Migrates global library visages through the universal cleaner.
+ * @private
+ */
+async function _migrateV3Global() {
     const globals = game.settings.get(MODULE_ID, VisageData.SETTING_KEY);
-    let globalUpdates = false;
-    let globalsMigrated = 0;
+    let migratedCount = 0;
+    let hasUpdates = false;
 
     for (const [key, data] of Object.entries(globals)) {
-        // Run universal cleaner on Globals too
         const cleaned = cleanVisageData(data);
 
-        // If missing 'mode', default to 'overlay' (classic Mask behavior)
-        if (!cleaned.mode) {
+        // Globals default to overlay if the DataModel assigned the 'identity' fallback
+        if (cleaned.mode === "identity" && !data.mode) {
             cleaned.mode = "overlay";
         }
 
-        // Check if data changed
         if (JSON.stringify(cleaned) !== JSON.stringify(data)) {
             globals[key] = cleaned;
-            globalUpdates = true;
-            globalsMigrated++;
+            hasUpdates = true;
+            migratedCount++;
         }
     }
 
-    if (globalUpdates) {
+    if (hasUpdates) {
         await game.settings.set(MODULE_ID, VisageData.SETTING_KEY, globals);
-        console.log(`Migrated ${globalsMigrated} Global Entries.`);
+        console.log(`Migrated ${migratedCount} Global Entries.`);
     }
 
-    console.log(`Migration Complete. Actors: ${actorsMigrated}, Globals: ${globalsMigrated}`);
-    console.groupEnd();
+    return migratedCount;
 }
 
 /**
