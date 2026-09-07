@@ -10,34 +10,54 @@
         </div>
 
         {{!-- Visibility Group (Global Only) --}}
-        {{#unless isLocal}}
+        {{!-- Visibility Group --}}
         <div class="header-form-group visibility-group">
             <label>{{localize "VISAGE.GlobalEditor.Visibility"}}</label>
             <div class="visage-mode-toggle">
-                <input type="radio" name="public" id="visibility-private-{{appId}}" value="false" {{checked (not isPublic)}}>
-                <label for="visibility-private-{{appId}}" data-tooltip="VISAGE.GlobalEditor.VisibilityPrivateHint">
-                    <i class="visage-icon private"></i> {{localize "VISAGE.GlobalEditor.Private"}}
-                </label>
+                
+                {{#if isLocal}}
+                    {{#if isGM}}
+                        <input type="radio" name="playerVisibility" id="vis-visible-{{appId}}" value="visible" {{checked (visageEq playerVisibility "visible")}}>
+                        <label class="visage-btn-first" for="vis-visible-{{appId}}" data-tooltip="VISAGE.GlobalEditor.PlayerVisibleHint">
+                            {{localize "VISAGE.GlobalEditor.PlayerVisible"}}
+                        </label>
 
-                <input type="radio" name="public" id="visibility-public-{{appId}}" value="true" {{checked isPublic}}>
-                <label for="visibility-public-{{appId}}" data-tooltip="VISAGE.GlobalEditor.VisibilityPublicHint">
-                    <i class="visage-icon public"></i> {{localize "VISAGE.GlobalEditor.Public"}}
-                </label>
+                        <input type="radio" name="playerVisibility" id="vis-locked-{{appId}}" value="locked" {{checked (visageEq playerVisibility "locked")}}>
+                        <label class="visage-btn-middle" for="vis-locked-{{appId}}" data-tooltip="VISAGE.GlobalEditor.PlayerLockedHint">
+                            {{localize "VISAGE.GlobalEditor.PlayerLocked"}}
+                        </label>
+
+                        <input type="radio" name="playerVisibility" id="vis-hidden-{{appId}}" value="hidden" {{checked (visageEq playerVisibility "hidden")}}>
+                        <label class="visage-btn-second" for="vis-hidden-{{appId}}" data-tooltip="VISAGE.GlobalEditor.PlayerHiddenHint">
+                            {{localize "VISAGE.GlobalEditor.PlayerHidden"}}
+                        </label>
+                    {{/if}}
+                {{else}}
+                    <input type="radio" name="public" id="visibility-private-{{appId}}" value="false" {{checked (not isPublic)}}>
+                    <label class="visage-btn-first" for="visibility-private-{{appId}}" data-tooltip="VISAGE.GlobalEditor.VisibilityPrivateHint">
+                        {{localize "VISAGE.GlobalEditor.Private"}}
+                    </label>
+
+                    <input type="radio" name="public" id="visibility-public-{{appId}}" value="true" {{checked isPublic}}>
+                    <label class="visage-btn-second" for="visibility-public-{{appId}}" data-tooltip="VISAGE.GlobalEditor.VisibilityPublicHint">
+                        {{localize "VISAGE.GlobalEditor.Public"}}
+                    </label>
+                {{/if}}
+
             </div>
         </div>
-        {{/unless}}
 
         {{!-- Mode Group --}}
         <div class="header-form-group mode-group">
             <label>{{localize "VISAGE.GlobalEditor.Mode"}}</label>
             <div class="visage-mode-toggle">
                 <input type="radio" name="mode" id="mode-identity-{{appId}}" value="identity" {{checked (visageEq mode "identity")}}>
-                <label for="mode-identity-{{appId}}" data-tooltip="VISAGE.Mode.IdentityHint">
+                <label class="visage-btn-first" for="mode-identity-{{appId}}" data-tooltip="VISAGE.Mode.IdentityHint">
                     {{localize "VISAGE.Mode.Identity"}}
                 </label>
 
                 <input type="radio" name="mode" id="mode-overlay-{{appId}}" value="overlay" {{checked (visageEq mode "overlay")}}>
-                <label for="mode-overlay-{{appId}}" data-tooltip="VISAGE.Mode.OverlayHint">
+                <label class="visage-btn-second" for="mode-overlay-{{appId}}" data-tooltip="VISAGE.Mode.OverlayHint">
                     {{localize "VISAGE.Mode.Overlay"}}
                 </label>
             </div>
@@ -113,7 +133,7 @@
                     <button type="button" data-action="toggleGrid" data-tooltip="{{localize 'VISAGE.Editor.ToggleGrid'}}">
                         <i class="visage-icon grid-on"></i>
                     </button>
-                    <div class="visage-divider-vertical" style="width:1px; background:rgba(255,255,255,0.1); margin: 0 4px;"></div>
+                    <div class="visage-divider-vertical" style="width:1px; background:var(--visage-translucent-overlay); margin: 0 4px;"></div>
                     <button type="button" data-action="zoomOut" data-tooltip="{{localize 'VISAGE.Editor.ZoomOut'}}">
                         <i class="visage-icon zoom-out"></i>
                     </button>
@@ -123,7 +143,7 @@
                     <button type="button" data-action="zoomIn" data-tooltip="{{localize 'VISAGE.Editor.ZoomIn'}}">
                         <i class="visage-icon zoom-in"></i>
                     </button>
-                    <div class="visage-divider-vertical" style="width:1px; background:rgba(255,255,255,0.1); margin: 0 4px;"></div>
+                    <div class="visage-divider-vertical" style="width:1px; background:var(--visage-translucent-overlay); margin: 0 4px;"></div>
                     <button type="button" data-action="replayPreview" data-tooltip="{{localize 'VISAGE.Editor.Replay'}}">
                         <i class="visage-icon refresh"></i>
                     </button>

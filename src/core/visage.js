@@ -54,6 +54,7 @@ export class Visage {
     static log(message, force = false) {
         VisageUtilities.log(message, force);
     }
+
     static async resolvePath(path) {
         return VisageUtilities.resolvePath(path);
     }
@@ -136,6 +137,8 @@ export class Visage {
      * @returns {Promise<boolean>} True if application was successful, false otherwise.
      */
     static async apply(tokenOrId, maskId, options = {}) {
+        if (!game.user.isGM && game.settings.get(MODULE_ID, "gmOnlyMode")) return false;
+
         const token = typeof tokenOrId === "string" ? canvas.tokens.get(tokenOrId) : tokenOrId;
         if (!token) return false;
 
@@ -147,6 +150,18 @@ export class Visage {
         const mode = data.mode || (source === "local" ? "identity" : "overlay");
         const switchIdentity = options.switchIdentity ?? mode === "identity";
         const clearStack = options.clearStack ?? false;
+
+        // SECURITY: If switching identities, verify the player has permission to remove the outgoing identity.
+        if (switchIdentity && !game.user.isGM) {
+            const currentIdentity = token.document.getFlag(DATA_NAMESPACE, "identity");
+            // If an identity exists and we are trying to overwrite it, test it against the permission guard.
+            if (currentIdentity && currentIdentity !== maskId) {
+                if (!this._getVisageData(token, currentIdentity)) {
+                    ui.notifications.warn(game.i18n.localize("VISAGE.Notifications.EnforcedVisage"));
+                    return false;
+                }
+            }
+        }
 
         // Wrap the read/modify/write cycle in the queue
         return this._queueTask(token.id, async () => {
@@ -205,9 +220,16 @@ export class Visage {
 
         if (!data) return null;
 
-        if (source === "global" && !game.user.isGM && !data.public) {
-            console.warn(`Visage | User ${game.user.name} attempted to apply private Global Visage ${maskId}`);
-            return null;
+        if (!game.user.isGM) {
+            if (source === "global" && !data.public) {
+                console.warn(`Visage | User ${game.user.name} attempted to access private Global Visage ${maskId}`);
+                return null;
+            }
+
+            if (source === "local" && data.playerVisibility === "hidden") {
+                console.warn(`Visage | User ${game.user.name} attempted to access hidden Local Visage ${maskId}`);
+                return null;
+            }
         }
 
         return { data, source };
@@ -338,8 +360,16 @@ export class Visage {
      * @returns {Promise<boolean>} True if removed successfully, false if not found.
      */
     static async remove(tokenOrId, maskId) {
+        if (!game.user.isGM && game.settings.get(MODULE_ID, "gmOnlyMode")) return false;
+
         const token = typeof tokenOrId === "string" ? canvas.tokens.get(tokenOrId) : tokenOrId;
         if (!token) return false;
+
+        // Abort and warn if a player tries to remove a hidden Visage
+        if (!game.user.isGM && !this._getVisageData(token, maskId)) {
+            ui.notifications.warn(game.i18n.localize("VISAGE.Notifications.EnforcedVisage"));
+            return false;
+        }
 
         return this._queueTask(token.id, async () => {
             const currentIdentity = token.document.getFlag(DATA_NAMESPACE, "identity");
@@ -438,6 +468,8 @@ export class Visage {
      * @returns {Promise<boolean>} True if successful.
      */
     static async revert(tokenOrId) {
+        if (!game.user.isGM && game.settings.get(MODULE_ID, "gmOnlyMode")) return false;
+
         const token = typeof tokenOrId === "string" ? canvas.tokens.get(tokenOrId) : tokenOrId;
         if (!token) return;
 
@@ -487,10 +519,15 @@ export class Visage {
         const actor = token?.actor;
         if (!actor) return [];
 
-        const local = VisageData.getLocal(actor).map((v) => ({
+        let local = VisageData.getLocal(actor).map((v) => ({
             ...v,
             type: "local",
         }));
+
+        // Filter out hidden local visages for players
+        if (!game.user.isGM) {
+            local = local.filter((v) => v.playerVisibility !== "hidden");
+        }
 
         let globals = VisageData.globals.map((v) => ({ ...v, type: "global" }));
         if (!game.user.isGM) {
@@ -543,8 +580,16 @@ export class Visage {
      * @param {string} layerId
      */
     static async toggleLayer(tokenOrId, layerId) {
+        if (!game.user.isGM && game.settings.get(MODULE_ID, "gmOnlyMode")) return false;
+
         const token = typeof tokenOrId === "string" ? canvas.tokens.get(tokenOrId) : tokenOrId;
         if (!token) return;
+
+        // Abort and warn if a player tries to toggle a hidden Visage.
+        if (!game.user.isGM && !this._getVisageData(token, layerId)) {
+            ui.notifications.warn(game.i18n.localize("VISAGE.Notifications.EnforcedVisage"));
+            return false;
+        }
 
         return this._queueTask(token.id, async () => {
             const currentStack = token.document.getFlag(DATA_NAMESPACE, "activeStack") || [];
@@ -612,6 +657,8 @@ export class Visage {
      * @param {Array<string>} newOrderIds - Array of Layer IDs in the desired order (Bottom to Top).
      */
     static async reorderStack(tokenOrId, newOrderIds) {
+        if (!game.user.isGM && game.settings.get(MODULE_ID, "gmOnlyMode")) return false;
+
         const token = typeof tokenOrId === "string" ? canvas.tokens.get(tokenOrId) : tokenOrId;
         if (!token) return;
 
